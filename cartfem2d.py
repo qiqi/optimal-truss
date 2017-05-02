@@ -9,11 +9,11 @@ Example:
     from cartfem2d import FEM2D
 
     nx, ny = 10, 2
-    fem = FEM2D(0.3, [nx, ny])  # Poisson ratio and rectangular domain shape
-    E = 1E6 * ones([nx, ny])    # elastic modulus array
+    fem = FEM2D(0.3, nx, ny)  # Poisson ratio and rectangular domain shape
+    E = 1E6 * ones([ny, nx])    # elastic modulus array of shape [ny,nx]
     K = fem.K_matrix(E)         # linear stiffness matrix
     dxy = fem.xy * 1E-6         # deformation
-    assert dxy.shape == (nx+1, ny+1, 2)
+    assert dxy.shape == (ny+1, nx+1, 2)
     G = fem.G_matrix(E, dxy)    # geometric stiffness matrix
 
 Qiqi Wang, May 2017
@@ -118,7 +118,7 @@ class FEM2D:
     '''
     The main interface of this module. See module doc for usage.
     '''
-    def __init__(self, nu, shape):
+    def __init__(self, nu, nelx, nely):
         '''
         nu: Poisson ratio
         shape: (nelx,nely) Note each direction has one less element than nodes
@@ -130,7 +130,7 @@ class FEM2D:
                 + transpose(C, [1,0,2])
                 + transpose(C, [2,0,1])
                 + transpose(C, [2,1,0])) / 2
-        nelx, nely = shape
+        # the following is a Python adaptation of what's in top88.m
         nodenrs = reshape(arange((1+nelx)*(1+nely)), [1+nely,1+nelx])
         edofVec = ravel(2 * nodenrs[:-1,:-1])
         self.edofMat = edofVec[:,newaxis] + \
@@ -150,6 +150,7 @@ class FEM2D:
         Linear stiffness matrix, square of size 2(nelx+1)(nely+1)
         Matrix is singular. Slice it before inverting (rhs can be force).
         '''
+        assert E.shape == (self.nely, self.nelx)
         K = csr_matrix((kron(ravel(E), ravel(self.Q)), (self.iK, self.jK)))
         return (K + K.T) / 2
 
@@ -157,29 +158,36 @@ class FEM2D:
         '''
         Geometric stiffness matrix, square of size 2(nelx+1)(nely+1)
         '''
+        assert E.shape == (self.nely, self.nelx)
         U = ravel(U)
         G = ravel(E)[:,newaxis,newaxis] * dot(U[self.edofMat], self.C)
         G = csr_matrix((ravel(G), (self.iK, self.jK)))
         return (G + G.T) / 2
 
+# ------------------------ tests --------------------- #
 
 def test_matrices():
+    'Test integrity of matrices and their agreement with top88 code'
     Q0, C0 = element_matrices(0)
     Q1, C1 = element_matrices(0.5)
-    assert(abs(Q0 * 48 - around(Q0 * 48)).sum() < 1E-12)
-    assert(abs(Q1 * 72 - around(Q1 * 72)).sum() < 1E-12)
-    assert(abs(C0 * 48 - around(C0 * 48)).sum() < 1E-12)
-    assert(abs(C1 * 72 - around(C1 * 72)).sum() < 1E-12)
-    print('Q0')
-    print(around(Q0 * 48))
-    print('Q1')
-    print(around(Q1 * 72 - Q0 * 96))
-    # print('C0')
-    # print(around(C0 * 48))
-    # print('C1')
-    # print(around(C1 * 72 - C0 * 96))
+    assert(abs(Q0 * 24 - around(Q0 * 24)).sum() < 1E-12)
+    assert(abs(Q1 * 36 - around(Q1 * 36)).sum() < 1E-12)
+    assert(abs(C0 * 24 - around(C0 * 24)).sum() < 1E-12)
+    assert(abs(C1 * 36 - around(C1 * 36)).sum() < 1E-12)
+    # copied from top88
+    top88 = '''12  3 -6 -3;  3 12  3  0; -6  3 12 -3; -3  0 -3 12
+               -6 -3  0  3; -3 -6 -3 -6;  0 -3 -6  3;  3 -6  3 -6
+               -4  3 -2  9;  3 -4 -9  4; -2 -9 -4 -3;  9  4 -3 -4
+                2 -3  4 -9; -3  2  9 -2;  4  9  2  3; -9 -2  3  2'''
+    top88 = array([[row.split() for row in line.split(';')]
+                   for line in top88.splitlines()], float)
+    top88_Q0 = vstack([hstack(top88[:2]), hstack(top88[1::-1])])
+    top88_Q1 = vstack([hstack(top88[2:]), hstack(top88[:1:-1])])
+    assert (around(Q0 * 24) == top88_Q0).all()
+    assert (around(Q1 * 36 - Q0 * 48) == top88_Q1).all()
 
 def test_rotation_under_compression(nu):
+    'Test energy of a single element under compression and rotation'
     Q, C = element_matrices(nu)
     x = array([-1, +1, +1, -1])
     y = array([-1, -1, +1, +1])
@@ -192,23 +200,31 @@ def test_rotation_under_compression(nu):
         U = ravel(transpose([u, v]))
         UE.append(dot(dot(Q, U), U))
         dUE.append(dot(dot(dot(C, U), U), U))
-
     UE, dUE = array([UE, dUE])
-
-    import pylab
-    pylab.figure()
-    pylab.plot(thetas, UE)
-    pylab.plot(thetas, UE + dUE)
-    pylab.legend(['Linear', 'Geometrically nonlinear'])
-    pylab.title('Rotation under compression')
-    pylab.xlabel('Rotation')
-    pylab.ylabel('Energy')
+    # energy according to linear elasticity is constant
+    assert(UE.max() - UE.min() < 1E-12)
+    # energy accounting for geometric nonlienarity has negative curvature
+    assert(dUE.max() - dUE[dUE.size//2] < 1E-12)
+    assert(dUE.min() - dUE[0] > -1E-12)
+    assert(dUE.min() - dUE[-1] > -1E-12)
+    # import pylab
+    # pylab.figure()
+    # pylab.plot(thetas, UE)
+    # pylab.plot(thetas, UE + dUE)
+    # pylab.legend(['Linear', 'Geometrically nonlinear'])
+    # pylab.title('Rotation under compression')
+    # pylab.xlabel('Rotation')
+    # pylab.ylabel('Energy')
 
 if __name__ == '__main__':
+    test_matrices()
+    test_rotation_under_compression(0)
+    test_rotation_under_compression(0.5)
+
     nu = 0.3
-    nelx, nely = 50, 2
-    E = ones([nelx,nely]) * 1E6
-    fem = FEM2D(nu, E.shape)
+    nelx, nely = 400,16 
+    E = ones([nely,nelx]) * 1E6
+    fem = FEM2D(nu, nelx, nely)
     x, y = fem.xy.transpose([2,0,1])
     K = fem.K_matrix(E)
 
@@ -238,6 +254,7 @@ if __name__ == '__main__':
     L, V_free = splinalg.eigs(G[freedofs,:][:,freedofs], 1,
                               M=K[freedofs,:][:,freedofs], which='SR')
     V[freedofs] = ravel(V_free.real)
+    Pcr = -1 / real(L)[0]
 
     V = V.reshape([nely + 1, nelx + 1, 2])
     dx, dy = V.transpose([2,0,1]) * 1E1
@@ -251,6 +268,8 @@ if __name__ == '__main__':
     ylim([-2, y.max()+2])
     title(-1/real(L)[0])
 
-    # test_matrices()
-    # test_rotation_under_compression(0)
-    # test_rotation_under_compression(0.5)
+    L = nelx * 4
+    I = nely**3 * 2 / 3
+    K = 1
+    Pcr_Euler = pi**2 * E[0,0] * I / (K * L)**2
+    print(Pcr / Pcr_Euler - 1)
