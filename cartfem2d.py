@@ -35,22 +35,22 @@ def _ddy(x, y):
     return array([-(1-x), -(1+x), (1+x), (1-x)]) / 4
 
 def _Axx(x, y):
-    '''linear component in xx stress field.
+    '''linear component in xx Cauchy-Green finite strain tensor field.
     sigma_xx = dot(_Axx(x,y), U)
     where U=[u00 v00 u10 v10 u11 v11 u01 v01]
     '''
     return ravel(transpose([_ddx(x, y), zeros(4)]))
 
 def _Ayy(x, y):
-    'linear component in yy stress field.  See doc for _Axx'
+    'linear component in yy Cauchy-Green strain tensor. See doc for _Axx'
     return ravel(transpose([zeros(4), _ddy(x, y)]))
 
 def _Axy(x, y):
-    'linear component in xy stress field.  See doc for _Axx'
+    'linear component in xy Cauchy-Green strain tensor. See doc for _Axx'
     return ravel(transpose([_ddy(x, y), _ddx(x, y)]))
 
 def _Bxx(x, y):
-    '''Quadratic component in xx stress field.
+    '''Quadratic component in xx Cauchy-Green finite strain tensor field.
     sigma_xx = dot(_Axx(x,y), U) + dot(dot(_Bxx(x,y), U), U)
     where U=[u00 v00 u10 v10 u11 v11 u01 v01]
     '''
@@ -61,7 +61,7 @@ def _Bxx(x, y):
     return (outer(eu, eu) + outer(ev, ev)) / 2
 
 def _Byy(x, y):
-    'Quadratic component in yy stress field.  See doc for _Bxx'
+    'Quadratic component in yy Cauchy-Green strain tensor. See doc for _Bxx'
     e = _ddy(x, y)
     z = zeros(4)
     eu = ravel(transpose([e, z]))
@@ -69,7 +69,7 @@ def _Byy(x, y):
     return (outer(eu, eu) + outer(ev, ev)) / 2
 
 def _Bxy(x, y):
-    'Quadratic component in xy stress field.  See doc for _Bxx'
+    'Quadratic component in xy Cauchy-Green strain tensor. See doc for _Bxx'
     e0 = _ddx(x, y)
     e1 = _ddy(x, y)
     z = zeros(4)
@@ -268,6 +268,7 @@ def test_euler_beam_buckling():
         K = 1
         Pcr_Euler = pi**2 * E * I / (K * L)**2
         rel_error = Pcr / Pcr_Euler - 1
+        print(nelx, nely, rel_error)
         assert rel_error * nely**2 < 1
         nelx *= 2
         nely *= 2
