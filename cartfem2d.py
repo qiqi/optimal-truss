@@ -19,7 +19,7 @@ Example:
 Qiqi Wang, May 2017
 '''
 
-from __future__ import division
+from __future__ import division, print_function
 
 from scipy.sparse import *
 import scipy.sparse.linalg as splinalg
@@ -142,7 +142,7 @@ class FEM2D:
     @property
     def xy(self):
         'return (nx+1, ny+1, 2) array. xy[:,:,0] is x; xy[:,:,1] is y.'
-        x, y = meshgrid(arange(self.nelx+1), nely - arange(self.nely+1))
+        x, y = meshgrid(arange(self.nelx+1), self.nely - arange(self.nely+1))
         return 2 * transpose([x, y], [1,2,0])
 
     def K_matrix(self, E):
@@ -164,7 +164,7 @@ class FEM2D:
         G = csr_matrix((ravel(G), (self.iK, self.jK)))
         return (G + G.T) / 2
 
-# ------------------------ tests --------------------- #
+# --------------------------------- tests ------------------------------------ #
 
 def test_matrices():
     'Test integrity of matrices and their agreement with top88 code'
@@ -216,60 +216,65 @@ def test_rotation_under_compression(nu):
     # pylab.xlabel('Rotation')
     # pylab.ylabel('Energy')
 
-if __name__ == '__main__':
-    test_matrices()
-    test_rotation_under_compression(0)
-    test_rotation_under_compression(0.5)
-
-    nu = 0.3
-    nelx, nely = 400,16 
-    E = ones([nely,nelx]) * 1E6
-    fem = FEM2D(nu, nelx, nely)
+def plot_deformation(fem, U):
+    nelx, nely = fem.nelx, fem.nely
     x, y = fem.xy.transpose([2,0,1])
-    K = fem.K_matrix(E)
+    dx, dy = U.transpose([2,0,1])
+    plot(x, y, '#888888')
+    plot(x.T, y.T, '#888888')
+    plot(x+dx, y+dy, 'r:', lw=2)
+    plot((x+dx).T, (y+dy).T, 'r:', lw=2)
+    axis('scaled')
+    xlim([-10, x.max()+10])
+    ylim([-10, y.max()+10])
 
+def beam_buckling_strength(E, nu, nelx, nely):
+    E = E * ones([nely,nelx])
     F = zeros(2*(nely+1)*(nelx+1))
     F[(nely//2+1) * (nelx+1) * 2 - 2] = -1
-    U = zeros((nely+1)*(nelx+1)*2)
+
     fixeddofs = set(arange(nely+1) * (nelx+1) * 2)
     fixeddofs.update([(nely//2+1) * (nelx+1) * 2 - 1])
-    alldofs = set(arange(U.size))
+    alldofs = set(arange(F.size))
     freedofs = array(sorted(set.difference(alldofs, fixeddofs)), int)
 
+    fem = FEM2D(nu, nelx, nely)
+
+    K = fem.K_matrix(E)
+    U = zeros((nely+1)*(nelx+1)*2)
     U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
-
     U = U.reshape([nely + 1, nelx + 1, 2])
-    G = fem.G_matrix(E, U)
-    dx, dy = U.transpose([2,0,1]) * 5E4
-    subplot(2,1,1)
-    plot(x, y, 'k')
-    plot(x.T, y.T, 'k')
-    plot(x+dx, y+dy, 'r')
-    plot((x+dx).T, (y+dy).T, 'r')
-    axis('scaled')
-    xlim([-2, x.max()+2])
-    ylim([-2, y.max()+2])
 
+    G = fem.G_matrix(E, U)
     V = zeros(F.size)
     L, V_free = splinalg.eigs(G[freedofs,:][:,freedofs], 1,
                               M=K[freedofs,:][:,freedofs], which='SR')
     V[freedofs] = ravel(V_free.real)
-    Pcr = -1 / real(L)[0]
-
     V = V.reshape([nely + 1, nelx + 1, 2])
-    dx, dy = V.transpose([2,0,1]) * 1E1
-    subplot(2,1,2)
-    plot(x, y, 'k')
-    plot(x.T, y.T, 'k')
-    plot(x+dx, y+dy, 'r')
-    plot((x+dx).T, (y+dy).T, 'r')
-    axis('scaled')
-    xlim([-2, x.max()+2])
-    ylim([-2, y.max()+2])
-    title(-1/real(L)[0])
+    # import pylab
+    # pylab.figure()
+    # pylab.subplot(2,1,1); plot_deformation(fem, U * 1E5)
+    # pylab.subplot(2,1,2); plot_deformation(fem, V * 10)
+    return -1 / real(L)[0]
 
-    L = nelx * 4
-    I = nely**3 * 2 / 3
-    K = 1
-    Pcr_Euler = pi**2 * E[0,0] * I / (K * L)**2
-    print(Pcr / Pcr_Euler - 1)
+def test_euler_beam_buckling():
+    E = 1E6
+    nu = 0.3
+    nelx, nely = 50,2
+    for i in range(4):
+        Pcr = beam_buckling_strength(E, nu, nelx, nely)
+        L = nelx * 4
+        I = nely**3 * 2 / 3
+        K = 1
+        Pcr_Euler = pi**2 * E * I / (K * L)**2
+        rel_error = Pcr / Pcr_Euler - 1
+        assert rel_error * nely**2 < 1
+        nelx *= 2
+        nely *= 2
+
+if __name__ == '__main__':
+    test_matrices()
+    test_rotation_under_compression(0)
+    test_rotation_under_compression(0.5)
+    test_euler_beam_buckling()
+    print('All tests completed')
