@@ -156,10 +156,10 @@ class FEM2D:
                 + transpose(C, [2,0,1])
                 + transpose(C, [2,1,0])) / 2
         # the following is a Python adaptation of what's in top88.m
-        nodenrs = reshape(arange((1+nelx)*(1+nely)), [1+nely,1+nelx])
+        nodenrs = reshape(arange((1+nelx)*(1+nely)), [1+nelx,1+nely])
         edofVec = ravel(2 * nodenrs[:-1,:-1])
         self.edofMat = edofVec[:,newaxis] + \
-                ravel(array([nelx+1, nelx+2, 1, 0])[:,newaxis] * 2 + arange(2))
+                ravel(array([1, nely+2, nely+1, 0])[:,newaxis] * 2 + arange(2))
         self.iK = ravel(kron(self.edofMat, ones([8,1], dtype=int)))
         self.jK = ravel(kron(self.edofMat, ones([1,8], dtype=int)))
         self.nelx, self.nely = nelx, nely
@@ -168,13 +168,13 @@ class FEM2D:
     def xy(self):
         'return (nx+1, ny+1, 2) array. xy[:,:,0] is x; xy[:,:,1] is y.'
         x, y = meshgrid(arange(self.nelx+1), self.nely - arange(self.nely+1))
-        return 2 * transpose([x, y], [1,2,0])
+        return 2 * array([x, y])
 
     def M_matrix(self, rho):
         '''
         Mass matrix, square of size 2(nelx+1)(nely+1)
         '''
-        assert rho.shape == (self.nely, self.nelx)
+        assert rho.shape == (self.nelx, self.nely)
         M = csr_matrix((kron(ravel(rho), ravel(self.M)), (self.iK, self.jK)))
         return (M + M.T) / 2
 
@@ -183,7 +183,7 @@ class FEM2D:
         Linear stiffness matrix, square of size 2(nelx+1)(nely+1)
         Matrix is singular. Slice it before inverting (rhs can be force).
         '''
-        assert E.shape == (self.nely, self.nelx)
+        assert E.shape == (self.nelx, self.nely)
         K = csr_matrix((kron(ravel(E), ravel(self.Q)), (self.iK, self.jK)))
         return (K + K.T) / 2
 
@@ -192,13 +192,14 @@ class FEM2D:
         derivative of UL^T * K_matrix(E) * UR with respect to E
         '''
         UL_UR = reshape(UL[self.iK] * UR[self.jK], [-1, self.Q.size])
-        return dot(UL_UR, ravel(self.Q)).reshape([self.nely, self.nelx])
+        return dot(UL_UR, ravel(self.Q)).reshape([self.nelx, self.nely])
 
     def G_matrix(self, E, U):
         '''
         Geometric stiffness matrix, square of size 2(nelx+1)(nely+1)
         '''
-        assert E.shape == (self.nely, self.nelx)
+        assert E.shape == (self.nelx, self.nely)
+        assert U.shape == (self.nelx + 1, self.nely + 1, 2)
         U = ravel(U)
         G = ravel(E)[:,newaxis,newaxis] * dot(U[self.edofMat], self.C)
         G = csr_matrix((ravel(G), (self.iK, self.jK)))
@@ -208,8 +209,9 @@ class FEM2D:
 
 def plot_deformation(fem, U):
     nelx, nely = fem.nelx, fem.nely
-    x, y = fem.xy.transpose([2,0,1])
-    dx, dy = U.transpose([2,0,1])
+    x, y = fem.xy
+    dx = U[:,:,0]
+    dy = U[:,:,1]
     plot(x, y, 'k', lw=.5)
     plot(x.T, y.T, 'k', lw=.5)
     plot(x+dx, y+dy, 'r', lw=.5)
@@ -221,7 +223,7 @@ def plot_deformation(fem, U):
 def node_index_x(i, j, nelx, nely):
     if i < 0: i = nelx + 1 + i
     if j < 0: j = nely + 1 + j
-    return (j * (nelx + 1) + i) * 2
+    return (i * (nely + 1) + j) * 2
 
 def node_index_y(i, j, nelx, nely):
     return node_index_x(i, j, nelx, nely) + 1
@@ -290,15 +292,15 @@ def test_rotation_under_compression(nu):
 
 def test_K_matrix_diff(nu, nelx, nely):
     fem = FEM2D(nu, nelx, nely)
-    dE = random.rand(nely, nelx)
+    dE = random.rand(nelx, nely)
     dK = fem.K_matrix(dE)
     UL, UR = random.rand(2, dK.shape[0])
     dJ = dot(UL, dK * UR)
     assert abs(dJ - (fem.dK_matrix_dE(UL, UR) * dE).sum()) < 1E-8
 
 def clamped_beam_vibration(E, rho, nu, nelx, nely):
-    E = E * ones([nely,nelx])
-    rho = rho * ones([nely,nelx])
+    E = E * ones([nelx,nely])
+    rho = rho * ones([nelx,nely])
     fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
     fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
     alldofs = set(arange(2*(nelx+1)*(nely+1)))
@@ -334,9 +336,10 @@ def test_clamped_beam_vibration(n_refinement):
         nely *= 2
 
 def beam_buckling_strength(E, nu, nelx, nely):
-    E = E * ones([nely,nelx])
+    E = E * ones([nelx,nely])
     F = zeros(2*(nely+1)*(nelx+1))
-    F[(nely//2+1) * (nelx+1) * 2 - 2] = -1
+    F[node_index_x(-1, nely//2, nelx, nely)] = -1
+    #F[(nely//2+1) * (nelx+1) * 2 - 2] = -1
 
     fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
     fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
@@ -348,14 +351,14 @@ def beam_buckling_strength(E, nu, nelx, nely):
     K = fem.K_matrix(E)
     U = zeros((nely+1)*(nelx+1)*2)
     U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
-    U = U.reshape([nely + 1, nelx + 1, 2])
+    U = U.reshape([nelx + 1, nely + 1, 2])
 
     G = fem.G_matrix(E, U)
     V = zeros(F.size)
     L, V_free = splinalg.eigs(G[freedofs,:][:,freedofs], 1,
                               M=K[freedofs,:][:,freedofs], which='SR')
     V[freedofs] = ravel(V_free.real)
-    V = V.reshape([nely + 1, nelx + 1, 2])
+    V = V.reshape([nelx + 1, nely + 1, 2])
     # import pylab
     # pylab.figure()
     # pylab.subplot(2,1,1); plot_deformation(fem, U * 1E5)
@@ -382,8 +385,8 @@ def I_beam_buckling_strength(fraction):
     E_total = 1E6
     nu = 0.3
     nelx, nely = 50,4
-    E = E_total * fraction * ones([nely,nelx])
-    E[1:3,:] = E_total * (1 - fraction)
+    E = E_total * fraction * ones([nelx, nely])
+    E[:,1:3] = E_total * (1 - fraction)
     F = zeros(2*(nely+1)*(nelx+1))
     F[node_index_x(-1, 0, nelx, nely)] = -.25 * fraction
     F[node_index_x(-1, 1, nelx, nely)] = -.25
@@ -401,14 +404,14 @@ def I_beam_buckling_strength(fraction):
     K = fem.K_matrix(E)
     U = zeros((nely+1)*(nelx+1)*2)
     U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
-    U = U.reshape([nely + 1, nelx + 1, 2])
+    U = U.reshape([nelx + 1, nely + 1, 2])
 
     G = fem.G_matrix(E, U)
     V = zeros(F.size)
     L, V_free = splinalg.eigs(G[freedofs,:][:,freedofs], 1,
                               M=K[freedofs,:][:,freedofs], which='SR')
     V[freedofs] = ravel(V_free.real)
-    V = V.reshape([nely + 1, nelx + 1, 2])
+    V = V.reshape([nelx + 1, nely + 1, 2])
     #import pylab
     #pylab.clf()
     #pylab.subplot(2,1,1); plot_deformation(fem, U * 2E5); title('deformation')
@@ -423,21 +426,21 @@ def test_I_beam_buckling():
     assert abs(strength_euler / strength - 1) < 0.05
 
 if __name__ == '__main__':
-    # test_M_matrix()
-    # test_K_matrices()
-    # test_rotation_under_compression(0)
-    # test_rotation_under_compression(0.5)
-    # test_K_matrix_diff(0.3, 20, 30)
-    # test_clamped_beam_vibration(2)
-    # test_euler_beam_buckling(4)
-    # test_I_beam_buckling()
-    # print('All tests completed')
-    nelx, nely = 10, 4
-    E = ones([nely,nelx])
-    fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
-    fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
-    alldofs = set(arange(2*(nelx+1)*(nely+1)))
-    freedofs = array(sorted(set.difference(alldofs, fixeddofs)), int)
+    test_M_matrix()
+    test_K_matrices()
+    test_rotation_under_compression(0)
+    test_rotation_under_compression(0.5)
+    test_K_matrix_diff(0.3, 20, 30)
+    test_clamped_beam_vibration(2)
+    test_euler_beam_buckling(4)
+    test_I_beam_buckling()
+    print('All tests completed')
+    # nelx, nely = 10, 4
+    # E = ones([nely,nelx])
+    # fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
+    # fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
+    # alldofs = set(arange(2*(nelx+1)*(nely+1)))
+    # freedofs = array(sorted(set.difference(alldofs, fixeddofs)), int)
 
-    fem = FEM2D(0.3, nelx, nely)
-    K = fem.K_matrix(E)
+    # fem = FEM2D(0.3, nelx, nely)
+    # K = fem.K_matrix(E)
