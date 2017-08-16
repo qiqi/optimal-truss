@@ -9,8 +9,9 @@ Example:
     from cartfem2d import FEM2D
 
     nx, ny = 10, 2
-    fem = FEM2D(0.3, nx, ny)  # Poisson ratio and rectangular domain shape
+    fem = FEM2D(0.3, nx, ny)    # Poisson ratio and rectangular domain shape
     E = 1E6 * ones([ny, nx])    # elastic modulus array of shape [ny,nx]
+    M = fem.M_matrix(E)         # mass matrix
     K = fem.K_matrix(E)         # linear stiffness matrix
     dxy = fem.xy * 1E-6         # deformation
     assert dxy.shape == (ny+1, nx+1, 2)
@@ -159,8 +160,8 @@ class FEM2D:
         edofVec = ravel(2 * nodenrs[:-1,:-1])
         self.edofMat = edofVec[:,newaxis] + \
                 ravel(array([nelx+1, nelx+2, 1, 0])[:,newaxis] * 2 + arange(2))
-        self.iK = ravel(kron(self.edofMat, ones([8,1])))
-        self.jK = ravel(kron(self.edofMat, ones([1,8])))
+        self.iK = ravel(kron(self.edofMat, ones([8,1], dtype=int)))
+        self.jK = ravel(kron(self.edofMat, ones([1,8], dtype=int)))
         self.nelx, self.nely = nelx, nely
 
     @property
@@ -185,6 +186,13 @@ class FEM2D:
         assert E.shape == (self.nely, self.nelx)
         K = csr_matrix((kron(ravel(E), ravel(self.Q)), (self.iK, self.jK)))
         return (K + K.T) / 2
+
+    def dK_matrix_dE(self, UL, UR):
+        '''
+        derivative of UL^T * K_matrix(E) * UR with respect to E
+        '''
+        UL_UR = reshape(UL[self.iK] * UR[self.jK], [-1, self.Q.size])
+        return dot(UL_UR, ravel(self.Q)).reshape([self.nely, self.nelx])
 
     def G_matrix(self, E, U):
         '''
@@ -279,6 +287,14 @@ def test_rotation_under_compression(nu):
     # pylab.title('Rotation under compression')
     # pylab.xlabel('Rotation')
     # pylab.ylabel('Energy')
+
+def test_K_matrix_diff(nu, nelx, nely):
+    fem = FEM2D(nu, nelx, nely)
+    dE = random.rand(nely, nelx)
+    dK = fem.K_matrix(dE)
+    UL, UR = random.rand(2, dK.shape[0])
+    dJ = dot(UL, dK * UR)
+    assert abs(dJ - (fem.dK_matrix_dE(UL, UR) * dE).sum()) < 1E-8
 
 def clamped_beam_vibration(E, rho, nu, nelx, nely):
     E = E * ones([nely,nelx])
@@ -404,6 +420,7 @@ if __name__ == '__main__':
     test_K_matrices()
     test_rotation_under_compression(0)
     test_rotation_under_compression(0.5)
+    test_K_matrix_diff(0.3, 20, 30)
     test_clamped_beam_vibration(2)
     test_euler_beam_buckling(4)
     print('All tests completed')
