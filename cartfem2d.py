@@ -378,7 +378,7 @@ def test_euler_beam_buckling(n_refinement):
         nelx *= 2
         nely *= 2
 
-def test_I_beam_buckling(fraction):
+def I_beam_buckling_strength(fraction):
     E_total = 1E6
     nu = 0.3
     nelx, nely = 50,4
@@ -409,35 +409,35 @@ def test_I_beam_buckling(fraction):
                               M=K[freedofs,:][:,freedofs], which='SR')
     V[freedofs] = ravel(V_free.real)
     V = V.reshape([nely + 1, nelx + 1, 2])
-    import pylab
-    pylab.clf()
-    pylab.subplot(2,1,1); plot_deformation(fem, U * 2E5); title('deformation')
-    pylab.subplot(2,1,2); plot_deformation(fem, V * 25); title('bucking mode')
+    #import pylab
+    #pylab.clf()
+    #pylab.subplot(2,1,1); plot_deformation(fem, U * 2E5); title('deformation')
+    #pylab.subplot(2,1,2); plot_deformation(fem, V * 25); title('bucking mode')
     return -1 / real(L)[0]
 
-if __name__ == '__main__':
-    test_M_matrix()
-    test_K_matrices()
-    test_rotation_under_compression(0)
-    test_rotation_under_compression(0.5)
-    test_K_matrix_diff(0.3, 20, 30)
-    test_clamped_beam_vibration(2)
-    test_euler_beam_buckling(4)
-    print('All tests completed')
-
-    fractions = hstack([arange(1, 10) / 10,
-                        arange(91, 100) / 100,
-                        arange(991, 1000) / 1000])
-    strength = []
-    for fraction in fractions:
-        strength.append(test_I_beam_buckling(fraction))
-        savefig('modes/mode{:.3f}.png'.format(fraction))
-    figure()
-    plot(fractions, strength, '.-')
-    EI = 1E6 * (fractions * 7 / 3 + (1 - fractions) / 3)
+def test_I_beam_buckling():
+    fraction = 0.8
+    strength = I_beam_buckling_strength(fraction)
+    EI = 1E6 * (fraction * 7 / 3 + (1 - fraction) / 3)
     strength_euler = EI * (pi / 50)**2
-    plot(fractions, strength_euler, '-')
-    grid()
-    legend(['FEM', 'Euler'])
-    xlabel('Outside fraction')
-    ylabel('Buckling strength')
+    assert abs(strength_euler / strength - 1) < 0.05
+
+if __name__ == '__main__':
+    # test_M_matrix()
+    # test_K_matrices()
+    # test_rotation_under_compression(0)
+    # test_rotation_under_compression(0.5)
+    # test_K_matrix_diff(0.3, 20, 30)
+    # test_clamped_beam_vibration(2)
+    # test_euler_beam_buckling(4)
+    # test_I_beam_buckling()
+    # print('All tests completed')
+    nelx, nely = 10, 4
+    E = ones([nely,nelx])
+    fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
+    fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
+    alldofs = set(arange(2*(nelx+1)*(nely+1)))
+    freedofs = array(sorted(set.difference(alldofs, fixeddofs)), int)
+
+    fem = FEM2D(0.3, nelx, nely)
+    K = fem.K_matrix(E)
