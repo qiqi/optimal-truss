@@ -167,7 +167,8 @@ class FEM2D:
     @property
     def xy(self):
         'return (nx+1, ny+1, 2) array. xy[:,:,0] is x; xy[:,:,1] is y.'
-        x, y = meshgrid(arange(self.nelx+1), self.nely - arange(self.nely+1))
+        x, y = meshgrid(arange(self.nelx+1),
+                        self.nely - arange(self.nely+1), indexing='ij')
         return 2 * array([x, y])
 
     def M_matrix(self, rho):
@@ -209,6 +210,7 @@ class FEM2D:
 
 def plot_deformation(fem, U):
     nelx, nely = fem.nelx, fem.nely
+    U = U.reshape([nelx+1, nely+1, 2])
     x, y = fem.xy
     dx = U[:,:,0]
     dy = U[:,:,1]
@@ -339,7 +341,6 @@ def beam_buckling_strength(E, nu, nelx, nely):
     E = E * ones([nelx,nely])
     F = zeros(2*(nely+1)*(nelx+1))
     F[node_index_x(-1, nely//2, nelx, nely)] = -1
-    #F[(nely//2+1) * (nelx+1) * 2 - 2] = -1
 
     fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
     fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
@@ -426,21 +427,47 @@ def test_I_beam_buckling():
     assert abs(strength_euler / strength - 1) < 0.05
 
 if __name__ == '__main__':
-    test_M_matrix()
-    test_K_matrices()
-    test_rotation_under_compression(0)
-    test_rotation_under_compression(0.5)
-    test_K_matrix_diff(0.3, 20, 30)
-    test_clamped_beam_vibration(2)
-    test_euler_beam_buckling(4)
-    test_I_beam_buckling()
-    print('All tests completed')
-    # nelx, nely = 10, 4
-    # E = ones([nely,nelx])
-    # fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
-    # fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
-    # alldofs = set(arange(2*(nelx+1)*(nely+1)))
-    # freedofs = array(sorted(set.difference(alldofs, fixeddofs)), int)
+    # test_M_matrix()
+    # test_K_matrices()
+    # test_rotation_under_compression(0)
+    # test_rotation_under_compression(0.5)
+    # test_K_matrix_diff(0.3, 20, 30)
+    # test_clamped_beam_vibration(2)
+    # test_euler_beam_buckling(4)
+    # test_I_beam_buckling()
+    # print('All tests completed')
+    nelx, nely = 100, 50
+    E = ones([nelx,nely])
+    F = zeros(2*(nely+1)*(nelx+1))
+    F[node_index_y(-1, 0, nelx, nely)] = -1
 
-    # fem = FEM2D(0.3, nelx, nely)
-    # K = fem.K_matrix(E)
+    fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
+    fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
+    alldofs = set(arange(2*(nelx+1)*(nely+1)))
+    freedofs = array(sorted(set.difference(alldofs, fixeddofs)), int)
+
+    fem = FEM2D(0.3, nelx, nely)
+    K = fem.K_matrix(E)
+    U = zeros((nely+1)*(nelx+1)*2)
+    U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
+
+    for i in range(1, 11):
+        ddE = fem.dK_matrix_dE(U, U)
+        E *= sqrt(ddE)
+        E /= E.mean()
+        E = maximum(E, 1E-6)
+        K = fem.K_matrix(E)
+        U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
+        if i % 1 == 0:
+            figure()
+            subplot(2,2,1)
+            imshow(E.T, cmap='hot')
+            colorbar()
+            subplot(2,2,2)
+            imshow(log10(E.T), cmap='hot')
+            colorbar()
+            subplot(2,2,3)
+            plot_deformation(fem, U)
+            subplot(2,2,4)
+            imshow(ddE.T, cmap='hot')
+            colorbar()
