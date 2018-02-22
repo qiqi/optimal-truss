@@ -88,7 +88,7 @@ def _Bxy(x, y):
 def mass_element_matrices():
     '''
     Quadratic component of the kinetic energy. Example:
-        Q = element_matrix() # Poisson ratio
+        M = mass_element_matrix()
         UK_times_2 = dot(dot(Q, U_dot), U_dot)
     where U=[u00 v00 u10 v10 u11 v11 u01 v01]
     '''
@@ -258,6 +258,12 @@ def test_M_matrix():
     assert abs(dot(Udot, dot(M, Udot)) - 8) < 1E-8
     Udot[:] = [1,-1,1,1,-1,1,-1,-1] # rotating counterclockwise
     assert abs(dot(Udot, dot(M, Udot)) - 8/3) < 1E-8
+    Udot[:] = [-1,0,1,0,1,0,-1,0] # squeezing in x
+    assert abs(dot(Udot, dot(M, Udot)) - 4/3) < 1E-8
+    Udot[:] = [0,1,0,1,0,-1,0,-1] # squeezing in y
+    assert abs(dot(Udot, dot(M, Udot)) - 4/3) < 1E-8
+    Udot[:] = [1,0,1,0,-1,0,-1,0] # shearing in x
+    assert abs(dot(Udot, dot(M, Udot)) - 4/3) < 1E-8
 
 def test_K_matrices():
     'Test integrity of matrices and their agreement with top88 code'
