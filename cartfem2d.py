@@ -41,6 +41,7 @@ def _ddy(x, y):
 
 def _Axx(x, y):
     '''linear component in xx Cauchy-Green finite strain tensor field.
+    For small enough deformation U, we can use the linear approximation
     sigma_xx = dot(_Axx(x,y), U)
     where U=[u00 v00 u10 v10 u11 v11 u01 v01]
     '''
@@ -105,9 +106,11 @@ def mass_element_matrices():
 
 def stiffness_element_matrices(nu):
     '''
-    Quadratic and cubic components of the elastic energy. Example:
-        Q, C = element_matrix(0.3) # Poisson ratio
-        UE_times_2 = dot(dot(Q, U), U) + dot(dot(dot(C, U), U), U)
+    Quadratic, cubic, and quartic components of the elastic energy. Example:
+        Q, C, QQ = element_matrix(0.3) # Poisson ratio
+        UE_times_2 = dot(dot(Q, U), U)
+                   + dot(dot(dot(C, U), U), U)
+                   + dot(dot(dot(dot(QQ, U), U), U), U)
     where U=[u00 v00 u10 v10 u11 v11 u01 v01]
     There is a quatic component but not computed here.
     '''
@@ -119,24 +122,38 @@ def stiffness_element_matrices(nu):
     Q1 = zeros([2*n, 2*n])
     C0 = zeros([2*n, 2*n, 2*n])
     C1 = zeros([2*n, 2*n, 2*n])
+    QQ0 = zeros([2*n, 2*n, 2*n, 2*n])
+    QQ1 = zeros([2*n, 2*n, 2*n, 2*n])
     for i in range(n):
         for j in range(n):
             axx = _Axx(xg[i,j], yg[i,j])
             ayy = _Ayy(xg[i,j], yg[i,j])
             axy = _Axy(xg[i,j], yg[i,j])
-            Q0 += wg[i,j] * (outer(axx, axx) + outer(ayy, ayy)
-                             + 1/2 * outer(axy, axy))
-            Q1 += wg[i,j] * (outer(axx, ayy) + outer(ayy, axx)
-                             - 1/2 * outer(axy, axy))
             bxx = _Bxx(xg[i,j], yg[i,j])
             byy = _Byy(xg[i,j], yg[i,j])
             bxy = _Bxy(xg[i,j], yg[i,j])
-            C0 += wg[i,j] * (2 * axx * bxx[:,:,newaxis]
-                    + 2 * ayy * byy[:,:,newaxis] + axy * bxy[:,:,newaxis])
-            C1 += wg[i,j] * (2 * axx * byy[:,:,newaxis]
-                    + 2 * ayy * bxx[:,:,newaxis] - axy * bxy[:,:,newaxis])
+            Q0 += wg[i,j] * (multiply.outer(axx, axx)
+                           + multiply.outer(ayy, ayy)
+                           + multiply.outer(axy, axy) / 2)
+            Q1 += wg[i,j] * (multiply.outer(axx, ayy)
+                           + multiply.outer(ayy, axx)
+                           - multiply.outer(axy, axy) / 2)
+            C0 += wg[i,j] * (multiply.outer(axx, bxx)
+                           + multiply.outer(ayy, byy)
+                           + multiply.outer(axy, bxy) / 2) * 2
+            C1 += wg[i,j] * (multiply.outer(axx, byy)
+                           + multiply.outer(ayy, bxx)
+                           - multiply.outer(axy, bxy) / 2) * 2
+            QQ0 += wg[i,j] * (multiply.outer(bxx, bxx)
+                            + multiply.outer(byy, byy)
+                            + multiply.outer(bxy, bxy) / 2)
+            QQ1 += wg[i,j] * (multiply.outer(bxx, byy)
+                            + multiply.outer(byy, bxx)
+                            - multiply.outer(bxy, bxy) / 2)
     premul = 1 / (1 - nu**2)
-    return premul * (Q0 + nu * Q1), premul * (C0 + nu * C1)
+    return (premul * (Q0 + nu * Q1),
+            premul * (C0 + nu * C1),
+            premul * (QQ0 + nu * QQ1))
 
 class FEM2D:
     '''
@@ -148,7 +165,7 @@ class FEM2D:
         shape: (nelx,nely) Note each direction has one less element than nodes
         '''
         self.M = mass_element_matrices()
-        self.Q, C = stiffness_element_matrices(nu)
+        self.Q, C, QQ = stiffness_element_matrices(nu)
         self.C = (transpose(C, [0,1,2])
                 + transpose(C, [0,2,1])
                 + transpose(C, [1,2,0])
@@ -244,12 +261,14 @@ def test_M_matrix():
 
 def test_K_matrices():
     'Test integrity of matrices and their agreement with top88 code'
-    Q0, C0 = stiffness_element_matrices(0)
-    Q1, C1 = stiffness_element_matrices(0.5)
+    Q0, C0, QQ0 = stiffness_element_matrices(0)
+    Q1, C1, QQ1 = stiffness_element_matrices(0.5)
     assert(abs(Q0 * 24 - around(Q0 * 24)).sum() < 1E-12)
     assert(abs(Q1 * 36 - around(Q1 * 36)).sum() < 1E-12)
     assert(abs(C0 * 24 - around(C0 * 24)).sum() < 1E-12)
     assert(abs(C1 * 36 - around(C1 * 36)).sum() < 1E-12)
+    assert(abs(QQ0 * 64*9*5 - around(QQ0 * 64*9*5)).sum() < 1E-10)
+    assert(abs(QQ1 * 32*27*5 - around(QQ1 * 32*27*5)).sum() < 1E-10)
     # copied from top88
     top88 = '''12  3 -6 -3;  3 12  3  0; -6  3 12 -3; -3  0 -3 12
                -6 -3  0  3; -3 -6 -3 -6;  0 -3 -6  3;  3 -6  3 -6
@@ -264,10 +283,9 @@ def test_K_matrices():
 
 def test_rotation_under_compression(nu):
     'Test energy of a single element under compression and rotation'
-    Q, C = stiffness_element_matrices(nu)
+    Q, C, _ = stiffness_element_matrices(nu)
     x = array([-1, +1, +1, -1])
     y = array([-1, -1, +1, +1])
-    theta = 0.1
     UE, dUE = [], []
     thetas = linspace(-0.01, 0.01, 100)
     for theta in thetas:
@@ -291,6 +309,24 @@ def test_rotation_under_compression(nu):
     # pylab.title('Rotation under compression')
     # pylab.xlabel('Rotation')
     # pylab.ylabel('Energy')
+
+def test_rotational_invariance(nu):
+    Q, C, QQ = stiffness_element_matrices(nu)
+    x0 = array([-1, +1, +1, -1])
+    y0 = array([-1, -1, +1, +1])
+    x = x0 + random.rand(4) * 0.1
+    y = y0 + random.rand(4) * 0.1
+    UE = []
+    thetas = linspace(-pi, pi, 100)
+    for theta in thetas:
+        u = x * cos(theta) - y * sin(theta) - x0
+        v = x * sin(theta) + y * cos(theta) - y0
+        U = ravel(transpose([u, v]))
+        UE.append([dot(dot(Q, U), U),
+                   dot(dot(dot(C, U), U), U),
+                   dot(dot(dot(dot(QQ, U), U), U), U)])
+    UE = array(UE)
+    assert((UE.sum(1).max() - UE.sum(1).min()) < 1E-12)
 
 def test_K_matrix_diff(nu, nelx, nely):
     fem = FEM2D(nu, nelx, nely)
@@ -427,47 +463,51 @@ def test_I_beam_buckling():
     assert abs(strength_euler / strength - 1) < 0.05
 
 if __name__ == '__main__':
-    # test_M_matrix()
-    # test_K_matrices()
-    # test_rotation_under_compression(0)
-    # test_rotation_under_compression(0.5)
-    # test_K_matrix_diff(0.3, 20, 30)
-    # test_clamped_beam_vibration(2)
-    # test_euler_beam_buckling(4)
-    # test_I_beam_buckling()
-    # print('All tests completed')
-    nelx, nely = 100, 50
-    E = ones([nelx,nely])
-    F = zeros(2*(nely+1)*(nelx+1))
-    F[node_index_y(-1, 0, nelx, nely)] = -1
+    test_M_matrix()
+    test_K_matrices()
+    test_rotation_under_compression(0)
+    test_rotation_under_compression(0.33)
+    test_rotation_under_compression(0.5)
+    test_rotational_invariance(0)
+    test_rotational_invariance(0.33)
+    test_rotational_invariance(0.5)
+    test_K_matrix_diff(0.3, 20, 30)
+    test_clamped_beam_vibration(2)
+    test_euler_beam_buckling(4)
+    test_I_beam_buckling()
+    print('All tests completed')
+    # nelx, nely = 100, 50
+    # E = ones([nelx,nely])
+    # F = zeros(2*(nely+1)*(nelx+1))
+    # F[node_index_y(-1, 0, nelx, nely)] = -1
 
-    fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
-    fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
-    alldofs = set(arange(2*(nelx+1)*(nely+1)))
-    freedofs = array(sorted(set.difference(alldofs, fixeddofs)), int)
+    # fixeddofs = set([node_index_x(0, j, nelx, nely) for j in arange(nely+1)])
+    # fixeddofs.update([node_index_y(0, nely // 2, nelx, nely)])
+    # alldofs = set(arange(2*(nelx+1)*(nely+1)))
+    # freedofs = array(sorted(set.difference(alldofs, fixeddofs)), int)
 
-    fem = FEM2D(0.3, nelx, nely)
-    K = fem.K_matrix(E)
-    U = zeros((nely+1)*(nelx+1)*2)
-    U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
+    # fem = FEM2D(0.3, nelx, nely)
+    # K = fem.K_matrix(E)
+    # U = zeros((nely+1)*(nelx+1)*2)
+    # U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
 
-    for i in range(1, 11):
-        ddE = fem.dK_matrix_dE(U, U)
-        E *= sqrt(ddE)
-        E /= E.mean()
-        E = maximum(E, 1E-6)
-        K = fem.K_matrix(E)
-        U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
-        if i % 1 == 0:
-            figure()
-            subplot(2,2,1)
-            imshow(E.T, cmap='hot')
-            colorbar()
-            subplot(2,2,2)
-            imshow(log10(E.T), cmap='hot')
-            colorbar()
-            subplot(2,2,3)
-            plot_deformation(fem, U)
-            subplot(2,2,4)
-            imshow(ddE.T, cmap='hot')
-            colorbar()
+    # for i in range(1, 11):
+    #     ddE = fem.dK_matrix_dE(U, U)
+    #     E *= sqrt(ddE)
+    #     E /= E.mean()
+    #     E = maximum(E, 1E-6)
+    #     K = fem.K_matrix(E)
+    #     U[freedofs] = splinalg.spsolve(K[freedofs,:][:,freedofs], F[freedofs])
+    #     if i % 1 == 0:
+    #         figure()
+    #         subplot(2,2,1)
+    #         imshow(E.T, cmap='hot')
+    #         colorbar()
+    #         subplot(2,2,2)
+    #         imshow(log10(E.T), cmap='hot')
+    #         colorbar()
+    #         subplot(2,2,3)
+    #         plot_deformation(fem, U)
+    #         subplot(2,2,4)
+    #         imshow(ddE.T, cmap='hot')
+    #         colorbar()
